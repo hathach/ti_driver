@@ -1,8 +1,27 @@
 #include <stdint.h> 
 #include <system_TM4C123.h>
+#include <TM4C123.h>
+
 #define SRAM_START 0x20000000
 #define SRAM_SIZE  (32*1024) 
 #define SRAM_END   (SRAM_START + SRAM_SIZE)
+
+//*****************************************************************************
+//
+//  Bit definitions for the FPU CPAC register.
+//
+//*****************************************************************************
+#define CPAC_CP11_M        0x00C00000  // CP11 Coprocessor Access
+                                            // Privilege
+#define CPAC_CP11_DIS      0x00000000  // Access Denied
+#define CPAC_CP11_PRIV     0x00400000  // Privileged Access Only
+#define CPAC_CP11_FULL     0x00C00000  // Full Access
+#define CPAC_CP10_M        0x00300000  // CP10 Coprocessor Access
+                                            // Privilege
+#define CPAC_CP10_DIS      0x00000000  // Access Denied
+#define CPAC_CP10_PRIV     0x00100000  // Privileged Access Only
+#define CPAC_CP10_FULL     0x00300000  // Full Access
+
 
 #define init_MSP   SRAM_END 
 
@@ -125,6 +144,7 @@ void PWM1_2_Handler                 (void) __attribute__ ((weak, alias("Default_
 void PWM1_3_Handler                 (void) __attribute__ ((weak, alias("Default_Handler")));
 void PWM1_FAULT_Handle              (void) __attribute__ ((weak, alias("Default_Handler")));
 
+extern void __libc_init_array(void) ; 
 int main(void); 
 
 __attribute__((section(".vectors"))) uint32_t vectors [] = 
@@ -286,12 +306,13 @@ __attribute__((section(".vectors"))) uint32_t vectors [] =
     (uint32_t)PWM1_FAULT_Handle ,   
 } ;
  
-extern uint32_t __start_data ;
-extern uint32_t __end_data; 
-extern uint32_t __start_bss;
-extern uint32_t __end_bss; 
-extern uint32_t __end_text;
-extern uint32_t __la_data;
+extern volatile uint32_t __start_data ;
+extern volatile uint32_t __end_data; 
+extern volatile uint32_t __start_bss;
+extern volatile uint32_t __end_bss; 
+extern volatile uint32_t __end_text;
+extern volatile uint32_t __la_data;
+
 void Default_Handler(void) 
 {
 
@@ -311,14 +332,27 @@ void Reset_Handler(void)
    {
        *pDest++ = *psrc++ ; 
    }
+
+    /* Zero fill .bss section */ 
+       __asm(" ldr     r0, =__start_bss\n"
+          "    ldr     r1, =__end_bss\n"
+          "    mov     r2, #0\n"
+          "    .thumb_func\n"
+          "    zero_loop:\n"
+          "    cmp     r0, r1\n"
+          "    it      lt\n"
+          "    strlt   r2, [r0], #4\n"
+          "    blt     zero_loop");
    
-   /* Fill bss segment with zeroes */
-   copySize = &__end_bss - &__start_bss ;
-   for (uint32_t i = 0; i < copySize; i++)
-   {
-       *pDest++ = 0 ;
-   }
-   
+
+    // Enable the floating-point unit.  This must be done here to handle the
+    // case where main() uses floating-point and the function prologue saves
+    // floating-point registers (which will fault if floating-point is not
+    // enabled).
+    SCB->CPACR &= ~ (CPAC_CP10_M | CPAC_CP11_M);
+    SCB->CPACR |= (CPAC_CP10_FULL | CPAC_CP11_FULL);
+
+   //__libc_init_array();
    SystemInit();
    main() ; 
      
